@@ -4,7 +4,7 @@ Code and walkthroughs for the Data Analysis Working Group's workshop series.
 
 Workshop data, checkpoint files, and slide decks for Workshop 1 will be distributed separately via OneDrive/SharePoint, not through GitHub — see each workshop's own README for the link. This repo holds the code and documentation only.
 
-## Workshops
+## Workshops for Fall 2026
 
 | Workshop | Topic | |
 |---|---|---|
