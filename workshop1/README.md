@@ -48,8 +48,7 @@ conceptual counterpart to the hands-on scripts and walkthrough doc here.
 
 - This document for instructions and code. Preferably as a separate tab.
 - R (4.4+) and RStudio, installed on your own laptop.
-- **`setup_packages.R` already run** — see this folder's `README.md` for
-  the one-time setup. 
+- **`setup_packages.R` already run**.
 
 ## Assumptions
 
