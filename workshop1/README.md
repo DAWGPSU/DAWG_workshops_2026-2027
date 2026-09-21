@@ -368,7 +368,7 @@ comparing `transect-name`, which has more than two levels).
 # Rarefy first for a fair comparison across samples of very different depth
 ps.rare <- rarefy_even_depth(ps, rngseed = 1, replace = FALSE)
 
-bray <- distance(ps.rare, method = "bray")
+bray <- phyloseq::distance(ps.rare, method = "bray")
 ord.bray <- ordinate(ps.rare, method = "PCoA", distance = bray)
 
 # stat_ellipse() draws a "typical spread" region per group -- a visual aid
