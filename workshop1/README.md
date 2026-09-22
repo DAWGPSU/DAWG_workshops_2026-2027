@@ -43,12 +43,62 @@ conceptual counterpart to the hands-on scripts and walkthrough doc here.
 
 ---
 
+## Getting Set Up
 
-## What You'll Need
+1. Install [R](https://cloud.r-project.org/) (4.4 or newer) and, if you
+   don't already have it, [RStudio](https://posit.co/download/rstudio-desktop/).
+2. Unzip the workshop folder you downloaded somewhere on your computer.
+3. Open R or RStudio with the downloaded folder (the one containing `data/` and
+   `scripts/`) as your working directory — in RStudio, the easiest way is
+   `File > Open Project` if there's a `.Rproj` file, or `Session > Set
+   Working Directory > Choose Directory` and pick this folder.
+4. Run `setup_packages.R` (open it and click "Source" in RStudio, or
+   `Rscript setup_packages.R` from a terminal). This installs everything —
+   DADA2, phyloseq, ALDEx3, etc. — at the exact versions this workshop was
+   tested with (via a tool called `renv`, if you're curious what the
+   `renv.lock` file in this folder is).
+5. Check you're in the right place:
 
-- This document for instructions and code. Preferably as a separate tab.
-- R (4.4+) and RStudio, installed on your own laptop.
-- **`setup_packages.R` already run**.
+``` r
+list.files()  # should show "data", "scripts", this .md file, etc.
+```
+### If `setup_packages.R` Fails to Install
+
+If `setup_packages.R` gives you package installation errors (this can
+happen with `renv` on some Mac setups), you can install the same
+packages directly instead — no exact version pinning, just whatever
+current version installs cleanly on your computer. Copy the code below
+into R and run it:
+
+```r
+# BiocManager can install BOTH plain CRAN packages and Bioconductor
+# packages (a separate repository used for biology-specific tools like
+# dada2 and phyloseq) -- so it's the only installer this needs, even
+# for the packages that live on regular CRAN.
+if (!requireNamespace("BiocManager", quietly = TRUE)) {
+  install.packages("BiocManager", repos = "https://cloud.r-project.org")
+}
+
+needed <- c("dada2", "phyloseq", "DECIPHER", "phangorn", "vegan",
+            "tidyverse", "ALDEx3")
+
+already_installed <- needed[sapply(needed, requireNamespace, quietly = TRUE)]
+to_install <- setdiff(needed, already_installed)
+
+if (length(to_install) > 0) {
+  BiocManager::install(to_install, update = FALSE, ask = FALSE)
+} else {
+  cat("Everything is already installed.\n")
+}
+```
+
+A first run can take 20-30 minutes, so if you hit this, plan to run it
+ahead of time rather than during the workshop. If anything above fails:
+on Windows, install Rtools first
+([cran.r-project.org/bin/windows/Rtools](https://cran.r-project.org/bin/windows/Rtools/));
+on Mac, install Xcode command line tools (`xcode-select --install` in
+Terminal). Then run the code again.
+
 
 ## Assumptions
 
@@ -58,22 +108,6 @@ This workflow assumes that your sequencing data:
 - Has already been demultiplexed (split into per-sample FASTQ files) —
   done for you, already sitting in `data/` in this folder.
 - Is paired-end, with forward and reverse FASTQ files for each sample.
-
-------------------------------------------------------------------------
-
-## Getting Set Up
-
-1. Unzip the workshop folder you downloaded somewhere on your computer.
-2. Open R or RStudio with **this folder** (the one containing `data/` and
-   `scripts/`) as your working directory. In RStudio: `Session > Set
-   Working Directory > Choose Directory`, and pick it. (If a `.Rproj` file
-   is included, just double-click it instead — that sets the working
-   directory for you.)
-3. Check you're in the right place:
-
-``` r
-list.files()  # should show "data", "scripts", this .md file, etc.
-```
 
 ------------------------------------------------------------------------
 
