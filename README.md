@@ -9,5 +9,6 @@ Workshop data, checkpoint files, and slide decks for Workshop 1 will be distribu
 | Workshop | Topic | |
 |---|---|---|
 | 1 | 16S Amplicon Sequencing (DADA2 + ALDEx3) | [README](workshop1/README.md) |
+| 2 | Metagenomic Sequencing (bioBakery + RGI) | [README](workshop2/README.md) |
 
 More workshops will be added here as they're built.
