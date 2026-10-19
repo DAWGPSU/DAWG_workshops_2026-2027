@@ -57,17 +57,24 @@ This is a **longitudinal** design: the *same* 12 people are sampled repeatedly. 
 
 ### 2.1 What the metadata looks like
 
-One row per sample, three columns:
+The metadata is the sample sheet for the paired-end runs of PRJEB20800 (`PRJEB20800_paired_samplesheet.tsv`), one row per sample. Three of its columns are used:
 
-| Sample | Participant | Timepoint |
+| Column in the sample sheet | Becomes | Example |
 |---|---|---|
-| S01 | P01 | Baseline |
-| S02 | P01 | Day4 |
-| S03 | P01 | Day8 |
-| S04 | P01 | Day42 |
-| S05 | P01 | Day180 |
+| `sample_alias` | `Sample` | ERAS1_Dag0 |
+| `participant_id` | `Participant` | ERAS1 |
+| `study_day` | `Timepoint` | 0 (Baseline) |
 
-`Sample` must match the `SampleID` from the Part 1 manifest. Timepoints are ordered, with **Baseline first**: every later timepoint is compared with the first one.
+`study_day` is converted to ordered timepoint labels, with **Baseline first**: every later timepoint is compared with the first one.
+
+| `study_day` | 0 | 4 | 8 | 42 | 180 |
+|---|---|---|---|---|---|
+| `Timepoint` | Baseline | Day4 | Day8 | Day42 | Day180 |
+
+`Sample` must match the `SampleID` from the Part 1 manifest, because it is also used to match the file names of the Part 1 output. If your manifest used a different column (for example `run_accession`), change `sample_id_column` in section 2.4.
+
+> [!NOTE]
+> We use the planned `study_day` rather than `actual_days_from_baseline`, which differs by a few days between people. Some participants have an extra Day 4 sample (alias suffix `opt`, phase `end_of_treatment`), which is kept as `Day4`.
 
 ### 2.2 R packages
 
@@ -77,9 +84,10 @@ Tested with R 4.3 or newer.
 install.packages(c(
   "magrittr", "dplyr", "tidyr", "tibble", "readr", "stringr", "purrr",
   "ggplot2", "scales", "jsonlite", "vegan", "permute", "lme4",
-  "lmerTest", "broom.mixed", "BiocManager"
+  "lmerTest", "broom.mixed", "BiocManager", "ggsci", "remotes"
 ))
 BiocManager::install("biobakery/maaslin3")   # route given in the MaAsLin3 documentation
+remotes::install_github("jbisanz/qiime2R")   # plot theme and interactive tables
 ```
 
 ### 2.3 Working directory and workspace image
@@ -100,7 +108,7 @@ your_working_directory/
 required_packages <- c(
   "magrittr", "dplyr", "tidyr", "tibble", "readr", "stringr", "purrr",
   "ggplot2", "scales", "jsonlite", "vegan", "permute", "lme4",
-  "lmerTest", "broom.mixed", "maaslin3"
+  "lmerTest", "broom.mixed", "maaslin3", "qiime2R", "ggsci"
 )
 missing_packages <- required_packages[
   !vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)
@@ -109,6 +117,7 @@ if (length(missing_packages) > 0) {
   stop("Install these packages first: ", paste(missing_packages, collapse = ", "))
 }
 library(magrittr)   # provides %>%; every other function is written as package::function
+invisible(lapply(required_packages, library, character.only = TRUE))
 
 # ---- Working directory with figures/ and rdata/ ------------------------------------
 working_directory <- "~/dawg_workshop_part2"      # <-- CHANGE THIS
@@ -136,6 +145,8 @@ permutations             <- 999      # number of shuffles in the permutation tes
 fdr_threshold            <- 0.10     # false discovery rate cut-off for differential abundance
 minimum_percent_coverage <- 80       # resistance genes: >= 80% of the gene must be covered
 minimum_mapped_reads     <- 5        # resistance genes: >= 5 reads must map
+
+ggplot2::theme_set(qiime2R::theme_q2r())
 ```
 
 > [!TIP]
@@ -151,21 +162,35 @@ if (!loaded_from_image) {
 
   # ---- Where the Part 1 output and the metadata live (presenter's computer) --------
   results_directory <- "/path/to/workshop/results"   # output folder of Part 1
-  metadata_path     <- "/path/to/metadata.tsv"       # see section 2.1
-  # Timepoint order, baseline FIRST. Edit to match the labels in your metadata.
+  metadata_path     <- "/path/to/PRJEB20800_paired_samplesheet.tsv"   # see section 2.1
+  # Which samplesheet column holds the sample name used in the Part 1 file names
+  # (e.g. ERAS1_Dag0.fastp.json). Must match the Part 1 manifest SampleID exactly.
+  # Options in this sheet: "sample_alias", "run_accession", "sample_accession".
+  sample_id_column  <- "sample_alias"                # <-- CHECK THIS against Part 1
+  # Nominal study days, baseline FIRST, and their labels (same order).
+  study_day_levels  <- c(0, 4, 8, 42, 180)
   timepoint_levels  <- c("Baseline", "Day4", "Day8", "Day42", "Day180")
 
-  # ---- Metadata ----------------------------------------------------------------------
-  metadata_raw <- readr::read_tsv(metadata_path, show_col_types = FALSE) %>%
-    dplyr::select(Sample, Participant, Timepoint) %>%
-    dplyr::mutate(
-      Participant = as.character(Participant),
-      Timepoint   = factor(Timepoint, levels = timepoint_levels)
+  # ---- Metadata: PRJEB20800 paired samplesheet ---------------------------------------
+  # Timepoint comes from the nominal `study_day` (not `actual_days_from_baseline`,
+  # which varies by a few days between people). The extra Day 4 sample ("opt",
+  # phase end_of_treatment) is kept as Day4; only some participants have one.
+  metadata_raw <- readr::read_tsv(
+    metadata_path, na = c("", "NA"), show_col_types = FALSE
+  ) %>%
+    dplyr::transmute(
+      Sample      = as.character(.data[[sample_id_column]]),
+      Participant = as.character(participant_id),
+      Timepoint   = factor(study_day, levels = study_day_levels,
+                           labels = timepoint_levels)
     )
   stopifnot(
-    "Sample IDs must be unique"            = !anyDuplicated(metadata_raw$Sample),
-    "Some Timepoint values are not in timepoint_levels" = !anyNA(metadata_raw$Timepoint)
+    "Sample IDs must be unique"                         = !anyDuplicated(metadata_raw$Sample),
+    "Some study_day values are not in study_day_levels" = !anyNA(metadata_raw$Timepoint),
+    "More than one sample for a participant at the same timepoint (check alias_suffix)" =
+      !anyDuplicated(metadata_raw[, c("Participant", "Timepoint")])
   )
+  print(table(metadata_raw$Timepoint))
 
   # ---- Read QC: fastp reports plus read counts after host removal ---------------------
   fastp_qc <- list.files(
@@ -331,7 +356,6 @@ read_stage_plot <- read_qc_checked %>%
   ggplot2::scale_y_log10(labels = scales::label_comma()) +
   ggplot2::scale_colour_manual(values = c("TRUE" = "black", "FALSE" = "red")) +
   ggplot2::labs(x = NULL, y = "Reads (R1 + R2)", colour = "Passes depth filter") +
-  ggplot2::theme_bw() +
   ggplot2::theme(legend.position = "bottom")
 print(read_stage_plot)
 ggplot2::ggsave(file.path("figures", "read_qc_stages.pdf"),
@@ -365,7 +389,7 @@ baseline_level <- levels(metadata$Timepoint)[1]
 ### 5.1 The species table
 
 > [!IMPORTANT]
-> **Run this.** It turns the MetaPhlAn profiles into a samples-by-species table of read counts.
+> **Run this.** It turns the MetaPhlAn profiles into a samples-by-species table of **relative abundances** (proportions of 0 to 1).
 
 MetaPhlAn writes a hierarchy: a read assigned to a species is *also* counted at its genus, family and so on. Mixing ranks in one table would count the same read many times, so we keep only **species-level rows** (rows containing `|s__` but no `|t__`).
 
@@ -380,12 +404,12 @@ species_long <- metaphlan_long %>%
   dplyr::transmute(
     Sample,
     species         = stringr::str_match(clade_name, "\\|s__([^|]+)")[, 2],
-    estimated_reads = round(estimated_reads)
+    relative_abundance = relative_abundance / 100
   )
 
 # Samples x species matrix of read counts, rows in the same order as `metadata`
 species_counts <- species_long %>%
-  tidyr::pivot_wider(names_from = species, values_from = estimated_reads,
+  tidyr::pivot_wider(names_from = species, values_from = relative_abundance,
                      values_fn = sum, values_fill = 0) %>%
   tibble::column_to_rownames("Sample") %>%
   as.matrix()
@@ -410,7 +434,7 @@ message(ncol(species_counts), " species detected; ", ncol(species_counts_filtere
 - **Richness:** number of species detected. It depends on sequencing depth, so the model includes depth as an extra term.
 - **Shannon index:** combines how many species there are and how evenly abundant they are.
 
-Each person is sampled repeatedly, so every model includes a **random intercept per participant**. Richness is a count, so it uses a negative-binomial model (a count model that allows extra spread). The model output compares **each timepoint with baseline**.
+Each person is sampled repeatedly, so every model includes a **random intercept per participant**. Richness is a count, so it uses a negative-binomial model (a count model that allows extra spread). The model output compares **each timepoint with baseline**, and `q.value` is the p-value corrected for several tests (false discovery rate).
 
 ```r
 stopifnot(identical(rownames(species_counts), metadata$Sample))
@@ -430,10 +454,9 @@ bacteria_alpha_plot <- bacteria_alpha %>%
   ggplot2::geom_line(ggplot2::aes(group = Participant), colour = "grey60", alpha = 0.5) +
   ggplot2::geom_boxplot(ggplot2::aes(fill = Timepoint), outlier.shape = NA, alpha = 0.7) +
   ggplot2::facet_wrap(~ metric, scales = "free_y") +
-  ggplot2::scale_fill_viridis_d() +
   ggplot2::labs(x = NULL, y = NULL) +
-  ggplot2::theme_bw() +
-  ggplot2::theme(legend.position = "none")
+  ggplot2::theme(legend.position = "none") +
+  ggsci::scale_fill_npg()
 print(bacteria_alpha_plot)
 ggplot2::ggsave(file.path("figures", "bacteria_alpha.pdf"),
                 bacteria_alpha_plot, width = 150, height = 70, units = "mm")
@@ -443,24 +466,31 @@ shannon_model <- lmerTest::lmer(Shannon ~ Timepoint + (1 | Participant),
                                 data = bacteria_alpha)
 richness_model <- lme4::glmer.nb(
   Richness ~ Timepoint + depth_log10_scaled + (1 | Participant),
-  data    = bacteria_alpha,
-  control = lme4::glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5))
+  data    = bacteria_alpha
 )
 
 bacteria_alpha_results <- dplyr::bind_rows(
   dplyr::mutate(broom.mixed::tidy(shannon_model, effects = "fixed"),
-                response = "Shannon"),
+                response = "Shannon",
+                q.value = stats::p.adjust(p = p.value, method = "fdr")
+                ),
   dplyr::mutate(broom.mixed::tidy(richness_model, effects = "fixed"),
-                response = "Richness")
+                response = "Richness",
+                q.value = stats::p.adjust(p = p.value, method = "fdr")
+                )
 ) %>%
   dplyr::filter(term != "(Intercept)") %>%
-  dplyr::select(response, term, estimate, std.error, statistic, p.value)
+  dplyr::select(response, term, estimate, std.error, statistic, p.value, q.value)
 readr::write_tsv(bacteria_alpha_results, file.path("rdata", "bacteria_alpha_models.tsv"))
-bacteria_alpha_results
+bacteria_alpha_results %>%
+  qiime2R::interactive_table()
 ```
 
 > [!TIP]
 > Each `Timepoint` row compares that timepoint with baseline. A negative Shannon estimate means lower diversity than at baseline. For richness the estimate is on the log scale: `exp(estimate)` is the fold-change in the number of species.
+
+> [!NOTE]
+> `qiime2R::interactive_table()` shows the results as a searchable table instead of printing them in the console.
 
 > [!WARNING]
 > A message like `boundary (singular) fit` means the person-to-person variation was estimated as zero, so the model behaves like an ordinary regression. It is a warning to be aware of, not an error.
@@ -472,11 +502,7 @@ bacteria_alpha_results
 
 ```r
 # ---- Bray-Curtis dissimilarity on relative abundance --------------------------------------
-bacteria_relative <- vegan::decostand(
-  species_counts_filtered[rowSums(species_counts_filtered) > 0, , drop = FALSE],
-  method = "total"
-)
-bray_bacteria <- vegan::vegdist(bacteria_relative, method = "bray")
+bray_bacteria <- vegan::vegdist(species_counts_filtered, method = "bray")
 
 # Metadata in exactly the same order as the distances (vegan requires this)
 metadata_bacteria <- metadata[match(labels(bray_bacteria), metadata$Sample), ]
@@ -497,18 +523,21 @@ bacteria_pcoa_plot <- tibble::tibble(
     ggplot2::aes(group = Participant), colour = "grey60", alpha = 0.6,
     arrow = grid::arrow(length = grid::unit(1.5, "mm"), type = "closed")
   ) +
+  ggplot2::stat_ellipse(ggplot2::aes(color = Timepoint), level = 0.95, linewidth = 0.6) +
   ggplot2::geom_point(ggplot2::aes(fill = Timepoint),
                       shape = 21, size = 2.5, colour = "black", stroke = 0.3) +
-  ggplot2::scale_fill_viridis_d() +
+  ggsci::scale_fill_npg() +
+  ggsci::scale_color_npg() +
   ggplot2::coord_equal() +
   ggplot2::labs(x = paste0("PC1 (", round(pcoa_percent[1], 1), "%)"),
                 y = paste0("PC2 (", round(pcoa_percent[2], 1), "%)")) +
-  ggplot2::theme_bw() +
   ggplot2::theme(legend.position = "bottom")
 print(bacteria_pcoa_plot)
 ggplot2::ggsave(file.path("figures", "bacteria_pcoa.pdf"),
                 bacteria_pcoa_plot, width = 120, height = 110, units = "mm")
 ```
+
+The ellipses mark the region that contains most of the samples from each timepoint.
 
 **Do timepoints differ in overall composition? (PERMANOVA)** Samples from one person are not interchangeable, so timepoint labels are shuffled **only within each person**.
 
@@ -562,9 +591,8 @@ bacteria_within_plot <- ggplot2::ggplot(
 ) +
   ggplot2::geom_line(ggplot2::aes(group = Participant), colour = "grey60", alpha = 0.5) +
   ggplot2::geom_boxplot(ggplot2::aes(fill = Timepoint), outlier.shape = NA, alpha = 0.7) +
-  ggplot2::scale_fill_viridis_d() +
+  ggsci::scale_fill_npg() +
   ggplot2::labs(x = NULL, y = paste0("Bray-Curtis distance to ", baseline_level)) +
-  ggplot2::theme_bw() +
   ggplot2::theme(legend.position = "none")
 print(bacteria_within_plot)
 ggplot2::ggsave(file.path("figures", "bacteria_distance_to_baseline.pdf"),
@@ -574,7 +602,8 @@ ggplot2::ggsave(file.path("figures", "bacteria_distance_to_baseline.pdf"),
 bacteria_within_results <- lmerTest::lmer(
   bray_to_baseline ~ Timepoint + (1 | Participant), data = bacteria_within
 ) %>%
-  broom.mixed::tidy(effects = "fixed")
+  broom.mixed::tidy(effects = "fixed") %>%
+  dplyr::mutate(q.value = stats::p.adjust(p.value, method = "fdr"))
 readr::write_tsv(bacteria_within_results,
                  file.path("rdata", "bacteria_distance_to_baseline_models.tsv"))
 bacteria_within_results
@@ -610,7 +639,7 @@ differential_formula <- "~ Timepoint + depth_log10 + (1|Participant)"
 bacteria_da_directory <- file.path("rdata", "maaslin3_bacteria_species")
 set.seed(1)
 maaslin3::maaslin3(
-  input_data                   = species_counts,   # raw counts: MaAsLin3 scales them itself
+  input_data                   = species_counts,
   input_metadata               = maaslin_metadata,
   output                       = bacteria_da_directory,
   formula                      = differential_formula,
@@ -634,7 +663,8 @@ bacteria_da_significant <- readr::read_tsv(
                                 "N", "N_not_zero", "qval_individual")))
 readr::write_tsv(bacteria_da_significant,
                  file.path("rdata", "bacteria_species_maaslin3_significant.tsv"))
-bacteria_da_significant
+bacteria_da_significant %>%
+  qiime2R::interactive_table()
 ```
 
 **Reading the table**
@@ -716,9 +746,8 @@ amr_richness_plot <- ggplot2::ggplot(
 ) +
   ggplot2::geom_line(ggplot2::aes(group = Participant), colour = "grey60", alpha = 0.5) +
   ggplot2::geom_boxplot(ggplot2::aes(fill = Timepoint), outlier.shape = NA, alpha = 0.7) +
-  ggplot2::scale_fill_viridis_d() +
+  ggsci::scale_fill_npg() +
   ggplot2::labs(x = NULL, y = "Resistance genes detected (ARO terms)") +
-  ggplot2::theme_bw() +
   ggplot2::theme(legend.position = "none")
 print(amr_richness_plot)
 ggplot2::ggsave(file.path("figures", "amr_richness.pdf"),
@@ -726,14 +755,15 @@ ggplot2::ggsave(file.path("figures", "amr_richness.pdf"),
 
 amr_richness_model <- lme4::glmer.nb(
   Richness ~ Timepoint + depth_log10_scaled + (1 | Participant),
-  data    = amr_richness,
-  control = lme4::glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5))
+  data    = amr_richness
 )
 amr_richness_results <- broom.mixed::tidy(amr_richness_model, effects = "fixed") %>%
   dplyr::filter(term != "(Intercept)") %>%
-  dplyr::select(term, estimate, std.error, statistic, p.value)
+  dplyr::mutate(q.value = stats::p.adjust(p.value, method = "fdr")) %>%
+  dplyr::select(term, estimate, std.error, statistic, p.value, q.value)
 readr::write_tsv(amr_richness_results, file.path("rdata", "amr_richness_model.tsv"))
-amr_richness_results
+amr_richness_results %>%
+  qiime2R::interactive_table()
 ```
 
 > [!TIP]
@@ -803,23 +833,7 @@ for (feature_level in c("aro_term", "drug_class")) {
 
 ---
 
-## 7. Save the workspace image
-
-> [!NOTE]
-> **Presenters only.** This runs only when the script built everything from the Part 1 tables (no image was loaded). It saves **every object in memory**, so attendees can load it and get all intermediate tables without the raw data. Attendees who loaded the image skip it automatically.
-
-```r
-if (!loaded_from_image) {
-  save.image(file = workspace_image_path)
-  message("Saved workspace image: ", workspace_image_path)
-}
-```
-
-The image holds data only. Attendees still need the R packages from section 2.2, and they should use a similar R version to the one that created it.
-
----
-
-## 8. Pitfalls
+## 7. Pitfalls
 
 - **Depth.** Richness and prevalence follow sequencing depth. Keep the depth term in the models and report it.
 - **Repeated samples.** Treating samples from the same person as independent makes results look more significant than they are. Keep the participant random intercept, and shuffle labels only within people for PERMANOVA.
@@ -831,7 +845,7 @@ The image holds data only. Attendees still need the R packages from section 2.2,
 
 ---
 
-## 9. References
+## 8. References
 
 - Palleja A, et al. Recovery of gut microbiota of healthy adults following antibiotic exposure. *Nat Microbiol* 3, 1255-1265 (2018). doi:10.1038/s41564-018-0257-9
 - Nickols WA, et al. MaAsLin 3: refining and extending generalized multivariable linear models for meta-omic association discovery. *bioRxiv* (2024). doi:10.1101/2024.12.13.628459
